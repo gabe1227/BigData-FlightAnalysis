@@ -1,0 +1,16 @@
+# Data Files
+*.csv
+<<<<<<< HEAD
+
+# Python Environment
+__pycache__/
+venv/
+*.pyc
+*.venv
+
+# VS Code Files
+.vscode/
+*.code-workspace
+*.vscode
+=======
+>>>>>>> f42842ca6d022b25a728eced487cddfb3fe65159
