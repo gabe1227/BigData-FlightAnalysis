@@ -1,7 +1,4 @@
 # Data Files
-*.csv
-<<<<<<< HEAD
-<<<<<<< HEAD
 
 # Python Environment
 __pycache__/
@@ -13,7 +10,3 @@ venv/
 .vscode/
 *.code-workspace
 *.vscode
-=======
->>>>>>> f42842ca6d022b25a728eced487cddfb3fe65159
-=======
->>>>>>> f42842ca6d022b25a728eced487cddfb3fe65159
