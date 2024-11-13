@@ -1,20 +1,22 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import dayofweek, hour, month, col
-from pyspark.ml.stat import Correlation
+from pyspark.sql.functions import dayofweek, hour, month, col, when
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.clustering import KMeans
-from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator, BinaryClassificationEvaluator
 
 # Initialize Spark session with HDFS configuration
+hdfs_host = "hdfs://providence.cs.colostate.edu:30222"
+
 spark = SparkSession.builder \
     .appName("FlightDelayAnalysis") \
-    .config("spark.hadoop.fs.defaultFS", "hdfs://your-hdfs-host:port") \
+    .config("spark.hadoop.fs.defaultFS", hdfs_host) \
     .getOrCreate()
 
 # Load the 2023 and 2007 datasets from HDFS
-df_2023 = spark.read.option("header", "true").csv("hdfs://your-hdfs-host:port/path/to/flight_delays_2023_cleaned.csv")
-df_2007 = spark.read.option("header", "true").csv("hdfs://your-hdfs-host:port/path/to/flight_delays_2007_cleaned.csv")
+df_2023 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/flight_delays.csv")
+df_2007 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/2007.csv")
 
 # Clean data and select relevant columns
 def clean_data(df):
@@ -25,47 +27,67 @@ def clean_data(df):
 df_2023_clean = clean_data(df_2023)
 df_2007_clean = clean_data(df_2007)
 
-# Prepare features for correlation analysis
-assembler_corr = VectorAssembler(inputCols=["DepDelay", "ArrDelay", "CarrierDelay", "WeatherDelay", "NASDelay", "SecurityDelay", "LateAircraftDelay"], outputCol="features")
-vector_data_2007 = assembler_corr.transform(df_2007_clean)
-correlation_matrix = Correlation.corr(vector_data_2007, "features").head()[0]
-print("Correlation matrix:\n", correlation_matrix)
+# Feature Engineering for Both Datasets
+def prepare_features(df):
+    return df.withColumn("DayOfWeek", dayofweek("ScheduledDeparture")) \
+             .withColumn("DepHour", hour("ScheduledDeparture")) \
+             .withColumn("Month", month("ScheduledDeparture"))
 
-# Extract day of the week, hour, and month for 2023 data
-df_2023_clean = df_2023_clean.withColumn("DayOfWeek", dayofweek("ScheduledDeparture")) \
-                             .withColumn("DepHour", hour("ScheduledDeparture")) \
-                             .withColumn("Month", month("ScheduledDeparture"))
+df_2023_clean = prepare_features(df_2023_clean)
+df_2007_clean = prepare_features(df_2007_clean)
 
-# Linear Regression Model
-assembler_lr = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
-data_2023_lr = assembler_lr.transform(df_2023_clean).select("features", "DelayMinutes").na.drop()
+# Add Binary Classification Label: IsDelayed
+delay_threshold = 15  # Define threshold in minutes for a flight to be considered delayed
+df_2023_clean = df_2023_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
+df_2007_clean = df_2007_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
 
-train_data, test_data = data_2023_lr.randomSplit([0.8, 0.2], seed=42)
+# Prepare features for classification model
+assembler_classification = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
+data_2023_classification = assembler_classification.transform(df_2023_clean).select("features", "IsDelayed").na.drop()
+data_2007_classification = assembler_classification.transform(df_2007_clean).select("features", "IsDelayed").na.drop()
 
-lr = LinearRegression(featuresCol="features", labelCol="DelayMinutes")
-lr_model = lr.fit(train_data)
+# Split data into training and testing sets
+train_data_2023, test_data_2023 = data_2023_classification.randomSplit([0.8, 0.2], seed=42)
+train_data_2007, test_data_2007 = data_2007_classification.randomSplit([0.8, 0.2], seed=42)
 
-# Evaluate Linear Regression
-predictions = lr_model.transform(test_data)
-evaluator = RegressionEvaluator(labelCol="DelayMinutes", predictionCol="prediction", metricName="rmse")
-rmse = evaluator.evaluate(predictions)
-print(f"Linear Regression RMSE: {rmse}")
+# Logistic Regression Model for Classification
+lr_classifier = LogisticRegression(featuresCol="features", labelCol="IsDelayed")
+model_2023 = lr_classifier.fit(train_data_2023)
+model_2007 = lr_classifier.fit(train_data_2007)
 
-# K-Means Clustering for Delay Analysis
-assembler_kmeans = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
-data_2023_kmeans = assembler_kmeans.transform(df_2023_clean).select("features", "Cancelled")
+# Evaluate Classification Model on Test Data
+predictions_2023 = model_2023.transform(test_data_2023)
+predictions_2007 = model_2007.transform(test_data_2007)
 
-kmeans = KMeans(featuresCol="features", k=3, seed=42)
-kmeans_model = kmeans.fit(data_2023_kmeans)
+# Evaluate using BinaryClassificationEvaluator
+evaluator = BinaryClassificationEvaluator(labelCol="IsDelayed", rawPredictionCol="prediction", metricName="areaUnderROC")
 
-# Evaluate K-Means Clustering
-predictions_kmeans = kmeans_model.transform(data_2023_kmeans)
-evaluator_kmeans = ClusteringEvaluator(predictionCol="prediction", metricName="silhouette")
-silhouette_score = evaluator_kmeans.evaluate(predictions_kmeans)
-print(f"K-Means Silhouette Score: {silhouette_score}")
+roc_2023 = evaluator.evaluate(predictions_2023)
+roc_2007 = evaluator.evaluate(predictions_2007)
 
-# Save cleaned data and predictions back to HDFS if needed
-df_2023_clean.write.csv("hdfs://providence:30222/output/cleaned_2023_data.csv", header=True)
-df_2007_clean.write.csv("hdfs://providence:port/path/to/cleaned_2007_data.csv", header=True)
-predictions.write.csv("hdfs://providence:port/path/to/lr_predictions.csv", header=True)
-predictions_kmeans.write.csv("hdfs://providence:port/path/to/kmeans_predictions.csv", header=True)
+print(f"2023 Classification Model ROC AUC: {roc_2023}")
+print(f"2007 Classification Model ROC AUC: {roc_2007}")
+
+# Additional metrics: Accuracy, Precision, Recall, F1-score
+def evaluate_classification(predictions, label_col="IsDelayed"):
+    tp = predictions.filter((col("prediction") == 1) & (col(label_col) == 1)).count()
+    tn = predictions.filter((col("prediction") == 0) & (col(label_col) == 0)).count()
+    fp = predictions.filter((col("prediction") == 1) & (col(label_col) == 0)).count()
+    fn = predictions.filter((col("prediction") == 0) & (col(label_col) == 1)).count()
+
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return accuracy, precision, recall, f1_score
+
+accuracy_2023, precision_2023, recall_2023, f1_2023 = evaluate_classification(predictions_2023)
+accuracy_2007, precision_2007, recall_2007, f1_2007 = evaluate_classification(predictions_2007)
+
+print(f"2023 Classification Model - Accuracy: {accuracy_2023}, Precision: {precision_2023}, Recall: {recall_2023}, F1 Score: {f1_2023}")
+print(f"2007 Classification Model - Accuracy: {accuracy_2007}, Precision: {precision_2007}, Recall: {recall_2007}, F1 Score: {f1_2007}")
+
+# Save predictions back to HDFS if needed
+predictions_2023.write.csv(hdfs_host + "/project/output/classification_2023_predictions.csv", header=True)
+predictions_2007.write.csv(hdfs_host + "/project/output/classification_2007_predictions.csv", header=True)
