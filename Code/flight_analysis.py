@@ -1,10 +1,9 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import dayofweek, hour, month, col, when
+from pyspark.sql.functions import dayofweek, hour, month, col, when, count
 from pyspark.ml.feature import VectorAssembler
-from pyspark.ml.regression import LinearRegression
 from pyspark.ml.clustering import KMeans
-from pyspark.ml.classification import LogisticRegression
-from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator, BinaryClassificationEvaluator
+from pyspark.ml.regression import LinearRegression
+from pyspark.ml.evaluation import ClusteringEvaluator, RegressionEvaluator
 
 # Initialize Spark session with HDFS configuration
 hdfs_host = "hdfs://providence.cs.colostate.edu:30222"
@@ -41,53 +40,80 @@ delay_threshold = 15  # Define threshold in minutes for a flight to be considere
 df_2023_clean = df_2023_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
 df_2007_clean = df_2007_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
 
-# Prepare features for classification model
-assembler_classification = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
-data_2023_classification = assembler_classification.transform(df_2023_clean).select("features", "IsDelayed").na.drop()
-data_2007_classification = assembler_classification.transform(df_2007_clean).select("features", "IsDelayed").na.drop()
+# Prepare features for clustering
+assembler_clustering = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
+data_2023_clustering = assembler_clustering.transform(df_2023_clean).select("features").na.drop()
+data_2007_clustering = assembler_clustering.transform(df_2007_clean).select("features").na.drop()
+
+# Train K-Means model
+kmeans = KMeans(k=5, seed=42, featuresCol="features", predictionCol="cluster")
+model_2023_kmeans = kmeans.fit(data_2023_clustering)
+model_2007_kmeans = kmeans.fit(data_2007_clustering)
+
+# Make predictions
+predictions_2023_kmeans = model_2023_kmeans.transform(data_2023_clustering)
+predictions_2007_kmeans = model_2007_kmeans.transform(data_2007_clustering)
+
+# Evaluate clustering
+evaluator_clustering = ClusteringEvaluator(predictionCol="cluster", featuresCol="features", metricName="silhouette")
+silhouette_2023 = evaluator_clustering.evaluate(predictions_2023_kmeans)
+silhouette_2007 = evaluator_clustering.evaluate(predictions_2007_kmeans)
+
+print(f"2023 K-Means Clustering Silhouette Score: {silhouette_2023}")
+print(f"2007 K-Means Clustering Silhouette Score: {silhouette_2007}")
+
+# Prepare features for linear regression
+assembler_regression = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
+data_2023_regression = assembler_regression.transform(df_2023_clean).select("features", "DelayMinutes").na.drop()
+data_2007_regression = assembler_regression.transform(df_2007_clean).select("features", "DelayMinutes").na.drop()
 
 # Split data into training and testing sets
-train_data_2023, test_data_2023 = data_2023_classification.randomSplit([0.8, 0.2], seed=42)
-train_data_2007, test_data_2007 = data_2007_classification.randomSplit([0.8, 0.2], seed=42)
+train_data_2023, test_data_2023 = data_2023_regression.randomSplit([0.8, 0.2], seed=42)
+train_data_2007, test_data_2007 = data_2007_regression.randomSplit([0.8, 0.2], seed=42)
 
-# Logistic Regression Model for Classification
-lr_classifier = LogisticRegression(featuresCol="features", labelCol="IsDelayed")
-model_2023 = lr_classifier.fit(train_data_2023)
-model_2007 = lr_classifier.fit(train_data_2007)
+# Linear Regression Model for Delay Prediction
+lr_regressor = LinearRegression(featuresCol="features", labelCol="DelayMinutes")
+model_2023_lr = lr_regressor.fit(train_data_2023)
+model_2007_lr = lr_regressor.fit(train_data_2007)
 
-# Evaluate Classification Model on Test Data
-predictions_2023 = model_2023.transform(test_data_2023)
-predictions_2007 = model_2007.transform(test_data_2007)
+# Evaluate Linear Regression Model on Test Data
+predictions_2023_lr = model_2023_lr.transform(test_data_2023)
+predictions_2007_lr = model_2007_lr.transform(test_data_2007)
 
-# Evaluate using BinaryClassificationEvaluator
-evaluator = BinaryClassificationEvaluator(labelCol="IsDelayed", rawPredictionCol="prediction", metricName="areaUnderROC")
+# Evaluate using RegressionEvaluator
+evaluator_regression = RegressionEvaluator(labelCol="DelayMinutes", predictionCol="prediction", metricName="rmse")
 
-roc_2023 = evaluator.evaluate(predictions_2023)
-roc_2007 = evaluator.evaluate(predictions_2007)
+rmse_2023 = evaluator_regression.evaluate(predictions_2023_lr)
+rmse_2007 = evaluator_regression.evaluate(predictions_2007_lr)
 
-print(f"2023 Classification Model ROC AUC: {roc_2023}")
-print(f"2007 Classification Model ROC AUC: {roc_2007}")
+print(f"2023 Linear Regression Model RMSE: {rmse_2023}")
+print(f"2007 Linear Regression Model RMSE: {rmse_2007}")
 
-# Additional metrics: Accuracy, Precision, Recall, F1-score
-def evaluate_classification(predictions, label_col="IsDelayed"):
-    tp = predictions.filter((col("prediction") == 1) & (col(label_col) == 1)).count()
-    tn = predictions.filter((col("prediction") == 0) & (col(label_col) == 0)).count()
-    fp = predictions.filter((col("prediction") == 1) & (col(label_col) == 0)).count()
-    fn = predictions.filter((col("prediction") == 0) & (col(label_col) == 1)).count()
+# Compare the number of delays/cancellations between 2007 and 2023
+delays_2023 = df_2023_clean.filter(col("IsDelayed") == 1).count()
+delays_2007 = df_2007_clean.filter(col("IsDelayed") == 1).count()
+cancellations_2023 = df_2023_clean.filter(col("Cancelled") == True).count()
+cancellations_2007 = df_2007_clean.filter(col("Cancelled") == True).count()
 
-    accuracy = (tp + tn) / (tp + tn + fp + fn)
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    
-    return accuracy, precision, recall, f1_score
+print(f"Number of Delays in 2023: {delays_2023}")
+print(f"Number of Delays in 2007: {delays_2007}")
+print(f"Number of Cancellations in 2023: {cancellations_2023}")
+print(f"Number of Cancellations in 2007: {cancellations_2007}")
 
-accuracy_2023, precision_2023, recall_2023, f1_2023 = evaluate_classification(predictions_2023)
-accuracy_2007, precision_2007, recall_2007, f1_2007 = evaluate_classification(predictions_2007)
+# Predict future flight delays and cancellations
+future_data = spark.createDataFrame([
+    (1, 10, 6, 500),  # Example data: DayOfWeek, DepHour, Month, Distance
+    (5, 15, 12, 1000)
+], ["DayOfWeek", "DepHour", "Month", "Distance"])
 
-print(f"2023 Classification Model - Accuracy: {accuracy_2023}, Precision: {precision_2023}, Recall: {recall_2023}, F1 Score: {f1_2023}")
-print(f"2007 Classification Model - Accuracy: {accuracy_2007}, Precision: {precision_2007}, Recall: {recall_2007}, F1 Score: {f1_2007}")
+future_data = assembler_regression.transform(future_data)
 
-# Save predictions back to HDFS if needed
-predictions_2023.write.csv(hdfs_host + "/project/output/classification_2023_predictions.csv", header=True)
-predictions_2007.write.csv(hdfs_host + "/project/output/classification_2007_predictions.csv", header=True)
+# Predict future delays
+future_predictions = model_2023_lr.transform(future_data)
+future_predictions.show()
+
+# Save clustering and regression results back to HDFS if needed
+predictions_2023_kmeans.write.csv(hdfs_host + "/project/output/clustering_2023_predictions.csv", header=True)
+predictions_2007_kmeans.write.csv(hdfs_host + "/project/output/clustering_2007_predictions.csv", header=True)
+predictions_2023_lr.write.csv(hdfs_host + "/project/output/regression_2023_predictions.csv", header=True)
+predictions_2007_lr.write.csv(hdfs_host + "/project/output/regression_2007_predictions.csv", header=True)
