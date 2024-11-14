@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import dayofweek, hour, month, col, when, count
+from pyspark.sql.functions import dayofweek, hour, month, col, when
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.regression import LinearRegression
@@ -18,27 +18,39 @@ df_2023 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/fl
 df_2007 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/2007.csv")
 
 # Clean data and select relevant columns
-def clean_data(df):
+def clean_data_2023(df):
     return df.withColumn("DelayMinutes", col("DelayMinutes").cast("double")) \
              .withColumn("Cancelled", col("Cancelled").cast("boolean")) \
              .withColumn("Diverted", col("Diverted").cast("boolean"))
 
-df_2023_clean = clean_data(df_2023)
-df_2007_clean = clean_data(df_2007)
+def clean_data_2007(df):
+    return df.withColumn("DepTime", col("DepTime").cast("double")) \
+             .withColumn("ArrDelay", col("ArrDelay").cast("double")) \
+             .withColumn("DepDelay", col("DepDelay").cast("double")) \
+             .withColumn("Cancelled", col("Cancelled").cast("boolean")) \
+             .withColumn("Diverted", col("Diverted").cast("boolean"))
+
+df_2023_clean = clean_data_2023(df_2023)
+df_2007_clean = clean_data_2007(df_2007)
 
 # Feature Engineering for Both Datasets
-def prepare_features(df):
+def prepare_features_2023(df):
     return df.withColumn("DayOfWeek", dayofweek("ScheduledDeparture")) \
              .withColumn("DepHour", hour("ScheduledDeparture")) \
              .withColumn("Month", month("ScheduledDeparture"))
 
-df_2023_clean = prepare_features(df_2023_clean)
-df_2007_clean = prepare_features(df_2007_clean)
+def prepare_features_2007(df):
+    return df.withColumn("DayOfWeek", col("DayOfWeek")) \
+             .withColumn("DepHour", (col("DepTime") / 100).cast("int")) \
+             .withColumn("Month", col("Month"))
+
+df_2023_clean = prepare_features_2023(df_2023_clean)
+df_2007_clean = prepare_features_2007(df_2007_clean)
 
 # Add Binary Classification Label: IsDelayed
 delay_threshold = 15  # Define threshold in minutes for a flight to be considered delayed
 df_2023_clean = df_2023_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
-df_2007_clean = df_2007_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
+df_2007_clean = df_2007_clean.withColumn("IsDelayed", when(col("ArrDelay") > delay_threshold, 1).otherwise(0))
 
 # Prepare features for clustering
 assembler_clustering = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
@@ -65,7 +77,7 @@ print(f"2007 K-Means Clustering Silhouette Score: {silhouette_2007}")
 # Prepare features for linear regression
 assembler_regression = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
 data_2023_regression = assembler_regression.transform(df_2023_clean).select("features", "DelayMinutes").na.drop()
-data_2007_regression = assembler_regression.transform(df_2007_clean).select("features", "DelayMinutes").na.drop()
+data_2007_regression = assembler_regression.transform(df_2007_clean).select("features", "ArrDelay").na.drop()
 
 # Split data into training and testing sets
 train_data_2023, test_data_2023 = data_2023_regression.randomSplit([0.8, 0.2], seed=42)
