@@ -5,17 +5,16 @@ from pyspark.ml.clustering import KMeans
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.evaluation import ClusteringEvaluator, RegressionEvaluator
 
-# Initialize Spark session with HDFS configuration
-hdfs_host = "hdfs://providence.cs.colostate.edu:30222"
+# Initialize Spark session with HDFS configuratin
 
 spark = SparkSession.builder \
     .appName("FlightDelayAnalysis") \
-    .config("spark.hadoop.fs.defaultFS", hdfs_host) \
+    .config("spark.hadoop.fs.defaultFS", "hdfs://providence.cs.colostate.edu:30221/") \
     .getOrCreate()
 
 # Load the 2023 and 2007 datasets from HDFS
-df_2023 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/flight_delays.csv")
-df_2007 = spark.read.option("header", "true").csv(hdfs_host + "/project/input/2007.csv")
+df_2023 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/flight_delays.csv")
+df_2007 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/2007.csv")
 
 # Clean data and select relevant columns
 def clean_data_2023(df):
@@ -125,10 +124,10 @@ future_predictions = model_2023_lr.transform(future_data)
 future_predictions.show()
 
 # Save clustering and regression results back to HDFS if needed
-predictions_2023_kmeans.write.csv(hdfs_host + "/project/output/clustering_2023_predictions.csv", header=True)
-predictions_2007_kmeans.write.csv(hdfs_host + "/project/output/clustering_2007_predictions.csv", header=True)
-predictions_2023_lr.write.csv(hdfs_host + "/project/output/regression_2023_predictions.csv", header=True)
-predictions_2007_lr.write.csv(hdfs_host + "/project/output/regression_2007_predictions.csv", header=True)
+predictions_2023_kmeans.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/clustering_2023_predictions")
+predictions_2007_kmeans.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/clustering_2007_predictions")
+predictions_2023_lr.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/regression_2023_predictions")
+predictions_2007_lr.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/regression_2007_predictions")
 
 # Stop spark
 spark.stop()
