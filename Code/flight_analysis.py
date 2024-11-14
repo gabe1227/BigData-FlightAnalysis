@@ -129,3 +129,6 @@ predictions_2023_kmeans.write.csv(hdfs_host + "/project/output/clustering_2023_p
 predictions_2007_kmeans.write.csv(hdfs_host + "/project/output/clustering_2007_predictions.csv", header=True)
 predictions_2023_lr.write.csv(hdfs_host + "/project/output/regression_2023_predictions.csv", header=True)
 predictions_2007_lr.write.csv(hdfs_host + "/project/output/regression_2007_predictions.csv", header=True)
+
+# Stop spark
+spark.stop()
