@@ -5,16 +5,35 @@ from pyspark.ml.clustering import KMeans
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.evaluation import ClusteringEvaluator, RegressionEvaluator
 
-# Initialize Spark session with HDFS configuratin
+# Initialize Spark session with Grayson's HDFS configuration
+#spark = SparkSession.builder \
+#    .appName("FlightDelayAnalysis") \
+#    .config("spark.hadoop.fs.defaultFS", "hdfs://providence.cs.colostate.edu:30221/") \
+#    .getOrCreate()
+    
+# Load the 2023 and 2007 datasets from HDFS
+#df_2023 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/flight_delays.csv")
+#df_2007 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/2007.csv")
 
+# Initialize Spark session with Jeff's HDFS congifuration
 spark = SparkSession.builder \
     .appName("FlightDelayAnalysis") \
-    .config("spark.hadoop.fs.defaultFS", "hdfs://providence.cs.colostate.edu:30221/") \
+    .config("spark.hadoop.fs.defaultFS", "hdfs://santa-fe.cs.colostate.edu:30216/") \
     .getOrCreate()
 
-# Load the 2023 and 2007 datasets from HDFS
-df_2023 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/flight_delays.csv")
-df_2007 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/2007.csv")
+# Load the 2023 and 2007 datasets from Jeff's HDFS
+df_2023 = spark.read.option("header", "true").csv("hdfs://santa-fe.cs.colostate.edu:30216/FinalProject/input/flight_delays.csv")
+df_2007 = spark.read.option("header", "true").csv("hdfs://santa-fe.cs.colostate.edu:30216/FinalProject/input/2007.csv")
+
+# Initialize Spark session with Gabe's HDFS configuration
+#spark = SparkSession.builder \
+#    .appName("FlightDelayAnalysis") \
+#    .config("spark.hadoop.fs.defaultFS", "hdfs://montplier.cs.colostate.edu:30262/") \
+#    .getOrCreate()
+
+# Load the 2023 and 2007 datasets from Gabe's HDFS
+#df_2023 = spark.read.option("header", "true").csv("hdfs://montplier.cs.colostate.edu:30262/FinalProject/input/flight_delays.csv")
+#df_2007 = spark.read.option("header", "true").csv("hdfs://montplier.cs.colostate.edu:30262/FinalProject/input/2007.csv")
 
 # Clean data and select relevant columns
 def clean_data_2023(df):
