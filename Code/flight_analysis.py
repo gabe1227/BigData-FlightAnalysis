@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import dayofweek, hour, month, year, col, when, coalesce, lit, substring, length, floor, udf
+from pyspark.sql.functions import dayofweek, hour, month, year, col, when, lit, floor, udf
 from pyspark.sql.types import StringType
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.clustering import KMeans
