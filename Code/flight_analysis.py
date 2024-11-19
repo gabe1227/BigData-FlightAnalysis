@@ -163,6 +163,27 @@ plt.xlabel('Year')
 plt.ylim(0, 1)  # Silhouette scores range between -1 and 1
 plt.show()
 
+# Display prediction results
+# Top reasons for delays (2019)
+plt.figure(figsize=(10, 6))
+sns.barplot(data=top_reasons_19_pd, x='prediction', y='count', hue='CancellationReason', palette='viridis')
+plt.title('Top Reasons for Delays/Cancellations (2019)')
+plt.xlabel('Cluster')
+plt.ylabel('Count')
+plt.legend(title='Reason', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
+
+# Top reasons for delays (2023)
+plt.figure(figsize=(10, 6))
+sns.barplot(data=top_reasons_23_pd, x='prediction', y='count', hue='DelayReason', palette='viridis')
+plt.title('Top Reasons for Delays (2023)')
+plt.xlabel('Cluster')
+plt.ylabel('Count')
+plt.legend(title='Reason', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
+
 # Define a sample dataset for predictions
 future_data = spark.createDataFrame([
     (1, 10, 6, 500, "Delta"),
@@ -202,27 +223,6 @@ future_data_filtered = future_data.filter(col("Airline").isin(top_airlines))
 future_data_filtered = cluster_assembler_23.transform(future_data_filtered)
 future_predictions_filtered = kmeans_model_23.transform(future_data_filtered)
 future_predictions_filtered_pd = future_predictions_filtered.toPandas()
-
-# Display prediction results
-# Top reasons for delays (2019)
-plt.figure(figsize=(10, 6))
-sns.barplot(data=top_reasons_19_pd, x='prediction', y='count', hue='CancellationReason', palette='viridis')
-plt.title('Top Reasons for Delays/Cancellations (2019)')
-plt.xlabel('Cluster')
-plt.ylabel('Count')
-plt.legend(title='Reason', bbox_to_anchor=(1.05, 1), loc='upper left')
-plt.tight_layout()
-plt.show()
-
-# Top reasons for delays (2023)
-plt.figure(figsize=(10, 6))
-sns.barplot(data=top_reasons_23_pd, x='prediction', y='count', hue='DelayReason', palette='viridis')
-plt.title('Top Reasons for Delays (2023)')
-plt.xlabel('Cluster')
-plt.ylabel('Count')
-plt.legend(title='Reason', bbox_to_anchor=(1.05, 1), loc='upper left')
-plt.tight_layout()
-plt.show()
 
 # Function to convert a vector to a string representation
 def vector_to_string(vector):
