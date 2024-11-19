@@ -1,133 +1,166 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import dayofweek, hour, month, col, when
+from pyspark.sql.functions import dayofweek, hour, month, year, col, when, coalesce, lit, substring, length, floor, udf
+from pyspark.sql.types import StringType
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.clustering import KMeans
-from pyspark.ml.regression import LinearRegression
-from pyspark.ml.evaluation import ClusteringEvaluator, RegressionEvaluator
+from pyspark.ml.evaluation import ClusteringEvaluator
 
-# Initialize Spark session with HDFS configuratin
+# Start a spark session for the cluster
+spark = SparkSession.builder.appName("FlightAnalysis").getOrCreate()
 
-spark = SparkSession.builder \
-    .appName("FlightDelayAnalysis") \
-    .config("spark.hadoop.fs.defaultFS", "hdfs://providence.cs.colostate.edu:30221/") \
-    .getOrCreate()
+# Load the 2019 and 2023 datasets from local file system
+df_2019 = spark.read.option("header", "true").csv("~/BigData-FlightAnalysis/Data/flights_sample_3m.csv")
+df_2023 = spark.read.option("header", "true").csv("~/BigData-FlightAnalysis/Data/2023.csv")
+df_2019.show(5)
+df_2023.show(5)
 
-# Load the 2023 and 2007 datasets from HDFS
-df_2023 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/flight_delays.csv")
-df_2007 = spark.read.option("header", "true").csv("hdfs://providence.cs.colostate.edu:30221/FinalProject/input/2007.csv")
+# Define some functions to clean the data for 2019 and 2023 datasets
+def clean_2019(df):
+    df = df.fillna({ # Fill missing values with default values null will be set to 0
+        "CANCELLED": 0,
+        "DIVERTED": 0,
+        "ARR_DELAY": 0.0,
+        "DEP_DELAY": 0.0,
+        "DEP_TIME": 0.0,
+        "DISTANCE": 0.0,
+        "AIRLINE": "Not Listed",
+        "CANCELLATION_CODE": "None"
+    })
+    
+    # Cast columns to appropriate types
+    df = df.withColumn("Cancelled", col("CANCELLED").cast("int").cast("boolean")) \
+           .withColumn("Diverted", col("DIVERTED").cast("int").cast("boolean")) \
+           .withColumn("ArrDelay", col("ARR_DELAY").cast("double")) \
+           .withColumn("DepDelay", col("DEP_DELAY").cast("double")) \
+           .withColumn("DepTime", col("DEP_TIME").cast("double")) \
+           .withColumn("Distance", col("DISTANCE").cast("double")) \
+           .withColumn("Airline", col("AIRLINE").cast("string")) \
+           .withColumn("DelayReason", col("CANCELLATION_CODE").cast("string"))
+    return df
 
-# Clean data and select relevant columns
-def clean_data_2023(df):
-    return df.withColumn("DelayMinutes", col("DelayMinutes").cast("double")) \
-             .withColumn("Cancelled", col("Cancelled").cast("boolean")) \
-             .withColumn("Diverted", col("Diverted").cast("boolean"))
+# Clean the 2019 dataset and print the schema and first 10 rows
+cleaned_19 = clean_2019(df_2019)
+'''print("Schema of '19 Data:")
+cleaned_19.printSchema()
+print("First 10 rows of '19 Data:")
+cleaned_19.show(10)'''
 
-def clean_data_2007(df):
-    return df.withColumn("DepTime", col("DepTime").cast("double")) \
-             .withColumn("ArrDelay", col("ArrDelay").cast("double")) \
-             .withColumn("DepDelay", col("DepDelay").cast("double")) \
-             .withColumn("Cancelled", col("Cancelled").cast("boolean")) \
-             .withColumn("Diverted", col("Diverted").cast("boolean"))
+# Define a function to clean the 2023 dataset
+def clean_2023(df):
+    df = df.fillna({ # Fill missing values with default values null will be set to 0
+        "DelayMinutes": 0.0,
+        "Cancelled": False,
+        "Diverted": False,
+        "Distance": 0.0,
+        "Airline": "Not Listed",
+        "DelayReason": "None"
+    })
 
-df_2023_clean = clean_data_2023(df_2023)
-df_2007_clean = clean_data_2007(df_2007)
+    # Cast columns to appropriate types
+    df = df.withColumn("Cancelled", col("Cancelled").cast("boolean")) \
+         .withColumn("Diverted", col("Diverted").cast("boolean")) \
+         .withColumn("DelayMinutes", col("DelayMinutes").cast("double")) \
+         .withColumn("Distance", col("Distance").cast("double")) \
+         .withColumn("Airline", col("Airline").cast("string")) \
+         .withColumn("DelayReason", col("DelayReason").cast("string"))
+    return df
 
-# Feature Engineering for Both Datasets
-def prepare_features_2023(df):
-    return df.withColumn("DayOfWeek", dayofweek("ScheduledDeparture")) \
-             .withColumn("DepHour", hour("ScheduledDeparture")) \
-             .withColumn("Month", month("ScheduledDeparture"))
+# Clean the 2023 dataset and print the schema and first 10 rows
+cleaned_23 = clean_2023(df_2023)
+'''print("Schema of '23 Data:")
+cleaned_23.printSchema()
+print("First 10 rows of '23 Data:")
+cleaned_23.show(10)'''
 
-def prepare_features_2007(df):
-    return df.withColumn("DayOfWeek", col("DayOfWeek")) \
-             .withColumn("DepHour", (col("DepTime") / 100).cast("int")) \
-             .withColumn("Month", col("Month"))
+# Prep data for clustering using basic feature engineering
+def prep_features_2019(df):
+  df = df.withColumn("DayofWeek", dayofweek(col("FL_DATE"))) \
+        .withColumn("DepHour", floor(col("DEP_TIME") / 100).cast("int")) \
+        .withColumn("Month", month(col("FL_DATE")))
+  return df
 
-df_2023_clean = prepare_features_2023(df_2023_clean)
-df_2007_clean = prepare_features_2007(df_2007_clean)
+prepped_19 = prep_features_2019(cleaned_19)
 
-# Add Binary Classification Label: IsDelayed
-delay_threshold = 15  # Define threshold in minutes for a flight to be considered delayed
-df_2023_clean = df_2023_clean.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
-df_2007_clean = df_2007_clean.withColumn("IsDelayed", when(col("ArrDelay") > delay_threshold, 1).otherwise(0))
+def prep_features_2023(df):
+  return df.withColumn("DayofWeek", dayofweek(col("ScheduledDeparture"))) \
+           .withColumn("DepHour", hour(col("ScheduledDeparture")))  \
+           .withColumn("Month", month(col("ScheduledDeparture")))
 
-# Prepare features for clustering
-assembler_clustering = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
-data_2023_clustering = assembler_clustering.transform(df_2023_clean).select("features").na.drop()
-data_2007_clustering = assembler_clustering.transform(df_2007_clean).select("features").na.drop()
+prepped_23 = prep_features_2023(cleaned_23)
 
-# Train K-Means model
-kmeans = KMeans(k=5, seed=42, featuresCol="features", predictionCol="cluster")
-model_2023_kmeans = kmeans.fit(data_2023_clustering)
-model_2007_kmeans = kmeans.fit(data_2007_clustering)
+# Add a Binary Classification Label: IsDelayed to Datasets
+delay_threshold = 5 # Minutes before a flight is considered delayed
+prepped_19 = prepped_19.withColumn("IsDelayed", when(col("ArrDelay") > delay_threshold, 1).otherwise(0))
+prepped_23 = prepped_23.withColumn("IsDelayed", when(col("DelayMinutes") > delay_threshold, 1).otherwise(0))
 
-# Make predictions
-predictions_2023_kmeans = model_2023_kmeans.transform(data_2023_clustering)
-predictions_2007_kmeans = model_2007_kmeans.transform(data_2007_clustering)
+# Modify VectorAssembler to handle potential issues with 'Distance' and replace inf values with 0.0
+cluster_assembler_19 = VectorAssembler(inputCols=["DayofWeek", "DepHour", "Month", "Distance"], outputCol="features", handleInvalid="keep")
+clustered_19 = cluster_assembler_19.transform(prepped_19).select("features", "DelayReason").replace(float('inf'), 0.0, subset=['features']).replace(float('NaN'), 0.0, subset=['features'])
 
-# Evaluate clustering
-evaluator_clustering = ClusteringEvaluator(predictionCol="cluster", featuresCol="features", metricName="silhouette")
-silhouette_2023 = evaluator_clustering.evaluate(predictions_2023_kmeans)
-silhouette_2007 = evaluator_clustering.evaluate(predictions_2007_kmeans)
+cluster_assembler_23 = VectorAssembler(inputCols=["DayofWeek", "DepHour", "Month", "Distance"], outputCol="features", handleInvalid="keep")
+clustered_23 = cluster_assembler_23.transform(prepped_23).select("features", "DelayReason").replace(float('inf'), 0.0, subset=['features']).replace(float('nan'), 0.0, subset=['features'])
 
-print(f"2023 K-Means Clustering Silhouette Score: {silhouette_2023}")
-print(f"2007 K-Means Clustering Silhouette Score: {silhouette_2007}")
+# Train KMeans models
+kmeans = KMeans(k=5, seed=42)
+kmeans_model_19 = kmeans.fit(clustered_19)
+kmeans_model_23 = kmeans.fit(clustered_23)
 
-# Prepare features for linear regression
-assembler_regression = VectorAssembler(inputCols=["DayOfWeek", "DepHour", "Month", "Distance"], outputCol="features")
-data_2023_regression = assembler_regression.transform(df_2023_clean).select("features", "DelayMinutes").na.drop()
-data_2007_regression = assembler_regression.transform(df_2007_clean).select("features", "ArrDelay").na.drop()
+# Make predictions based on the model
+kmeans_predictions_19 = kmeans_model_19.transform(clustered_19)
+kmeans_predictions_23 = kmeans_model_23.transform(clustered_23)
 
-# Split data into training and testing sets
-train_data_2023, test_data_2023 = data_2023_regression.randomSplit([0.8, 0.2], seed=42)
-train_data_2007, test_data_2007 = data_2007_regression.randomSplit([0.8, 0.2], seed=42)
+# Evaluate Clustering
+cluster_eval = ClusteringEvaluator(predictionCol="prediction", featuresCol="features", metricName="silhouette") # Changed predictionCol to "prediction"
+silhouette_score_19 = cluster_eval.evaluate(kmeans_predictions_19)
+silhouette_score_23 = cluster_eval.evaluate(kmeans_predictions_23)
 
-# Linear Regression Model for Delay Prediction
-lr_regressor = LinearRegression(featuresCol="features", labelCol="DelayMinutes")
-model_2023_lr = lr_regressor.fit(train_data_2023)
-model_2007_lr = lr_regressor.fit(train_data_2007)
+print(f"Silhouette Score (2019): {silhouette_score_19}")
+print(f"Silhouette Score (2023): {silhouette_score_23}")
 
-# Evaluate Linear Regression Model on Test Data
-predictions_2023_lr = model_2023_lr.transform(test_data_2023)
-predictions_2007_lr = model_2007_lr.transform(test_data_2007)
+# Also change predictionCol to "prediction" in the groupBy for top reasons
+top_reasons_19 = kmeans_predictions_19.groupBy("prediction", "DelayReason").count().orderBy("prediction", "count", ascending=False) # Changed "cluster" to "prediction"
+top_reasons_23 = kmeans_predictions_23.groupBy("prediction", "DelayReason").count().orderBy("prediction", "count", ascending=False) # Changed "cluster" to "prediction"
 
-# Evaluate using RegressionEvaluator
-evaluator_regression = RegressionEvaluator(labelCol="DelayMinutes", predictionCol="prediction", metricName="rmse")
+print("Top Reasons for Delays (2019):")
+top_reasons_19.show(truncate=False)
 
-rmse_2023 = evaluator_regression.evaluate(predictions_2023_lr)
-rmse_2007 = evaluator_regression.evaluate(predictions_2007_lr)
+print("Top Reasons for Delays (2023):")
+top_reasons_23.show(truncate=False)
 
-print(f"2023 Linear Regression Model RMSE: {rmse_2023}")
-print(f"2007 Linear Regression Model RMSE: {rmse_2007}")
-
-# Compare the number of delays/cancellations between 2007 and 2023
-delays_2023 = df_2023_clean.filter(col("IsDelayed") == 1).count()
-delays_2007 = df_2007_clean.filter(col("IsDelayed") == 1).count()
-cancellations_2023 = df_2023_clean.filter(col("Cancelled") == True).count()
-cancellations_2007 = df_2007_clean.filter(col("Cancelled") == True).count()
-
-print(f"Number of Delays in 2023: {delays_2023}")
-print(f"Number of Delays in 2007: {delays_2007}")
-print(f"Number of Cancellations in 2023: {cancellations_2023}")
-print(f"Number of Cancellations in 2007: {cancellations_2007}")
-
-# Predict future flight delays and cancellations
+# For simplicity, we will use the 2023 data to predict cancellations in 2024
 future_data = spark.createDataFrame([
-    (1, 10, 6, 500),  # Example data: DayOfWeek, DepHour, Month, Distance
-    (5, 15, 12, 1000)
-], ["DayOfWeek", "DepHour", "Month", "Distance"])
+    (1, 10, 6, 500, "Delta"), 
+    (5, 15, 12, 1000, "United"),
+    (2, 7, 9, 750, "Southwest Airlines"),
+    (7, 20, 2, 4000, "American Airlines"),
+    (5, 8, 4, 5599, "Air France")], 
+     ["DayofWeek", "DepHour", "Month", "Distance", "Airline"])
 
-future_data = assembler_regression.transform(future_data)
-
-# Predict future delays
-future_predictions = model_2023_lr.transform(future_data)
+future_data = cluster_assembler_23.transform(future_data)
+future_predictions = kmeans_model_23.transform(future_data)
 future_predictions.show()
 
-# Save clustering and regression results back to HDFS if needed
-predictions_2023_kmeans.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/clustering_2023_predictions")
-predictions_2007_kmeans.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/clustering_2007_predictions")
-predictions_2023_lr.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/regression_2023_predictions")
-predictions_2007_lr.write.format("csv").save("hdfs://providence.cs.colostate.edu:30221/FinalProject/output/regression_2007_predictions")
+# Function to convert a vector to a string representation
+def vector_to_string(vector):
+  if vector is not None:
+    return str(vector.toArray().tolist())  # Convert to a list and then to a string
+  else:
+    return None
 
-# Stop spark
+# Register the UDF
+vector_to_string_udf = udf(vector_to_string, StringType())
+
+# Convert 'features' column to string before saving
+kmeans_predictions_19 = kmeans_predictions_19.withColumn("features_str", vector_to_string_udf("features")).drop("features")
+kmeans_predictions_23 = kmeans_predictions_23.withColumn("features_str", vector_to_string_udf("features")).drop("features")
+future_predictions = future_predictions.withColumn("features_str", vector_to_string_udf("features")).drop("features")
+
+# Save cluster results to a CSV file
+kmeans_predictions_19.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/kmeans_predictions_19.csv")
+kmeans_predictions_23.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/kmeans_predictions_23.csv")
+
+# Save future predictions
+future_predictions.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/future_predictions.csv")
+
+# Stop the spark session
 spark.stop()
