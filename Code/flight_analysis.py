@@ -156,11 +156,11 @@ kmeans_predictions_23 = kmeans_predictions_23.withColumn("features_str", vector_
 future_predictions = future_predictions.withColumn("features_str", vector_to_string_udf("features")).drop("features")
 
 # Save cluster results to a CSV file
-kmeans_predictions_19.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/kmeans_predictions_19.csv")
-kmeans_predictions_23.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/kmeans_predictions_23.csv")
+kmeans_predictions_19.write.format("csv").option("header", "true").save("~/BigData-FlightAnalysis/Data/kmeans_predictions_19.csv")
+kmeans_predictions_23.write.format("csv").option("header", "true").save("~/BigData-FlightAnalysis/Data/kmeans_predictions_23.csv")
 
 # Save future predictions
-future_predictions.write.format("csv").option("header", "true").save("/content/drive/MyDrive/Data/future_predictions.csv")
+future_predictions.write.format("csv").option("header", "true").save("~/BigData-FlightAnalysis/Data/future_predictions.csv")
 
 # Stop the spark session
 spark.stop()
