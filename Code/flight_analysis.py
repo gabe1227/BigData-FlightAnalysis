@@ -241,6 +241,6 @@ kmeans_predictions_23_with_str = kmeans_predictions_23.withColumn("features_str"
 future_predictions_with_str = future_predictions_filtered.withColumn("features_str", vector_to_string_udf("features")).drop("features")
 
 # Save all results to Google Drive
-kmeans_predictions_19_with_str.write.format("csv").option("header", "true").mode("overwrite").save("/content/drive/MyDrive/Data/kmeans_predictions_19.csv")
-kmeans_predictions_23_with_str.write.format("csv").option("header", "true").mode("overwrite").save("/content/drive/MyDrive/Data/kmeans_predictions_23.csv")
-future_predictions_with_str.write.format("csv").option("header", "true").mode("overwrite").save("/content/drive/MyDrive/Data/future_predictions.csv")
+kmeans_predictions_19_with_str.write.format("csv").option("header", "true").mode("overwrite").save("~/BigData-FlightAnalysis/Data/kmeans_predictions_19.csv")
+kmeans_predictions_23_with_str.write.format("csv").option("header", "true").mode("overwrite").save("~/BigData-FlightAnalysis/Data/kmeans_predictions_23.csv")
+future_predictions_with_str.write.format("csv").option("header", "true").mode("overwrite").save("~/BigData-FlightAnalysis/Data/future_predictions.csv")
